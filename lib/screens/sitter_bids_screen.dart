@@ -1,63 +1,121 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:web_socket_channel/web_socket_channel.dart';
 import '../utils/app_colors.dart';
-import 'active_order_screen.dart'; // Gunakan file dari jawaban saya sebelumnya
+import '../services/bidding_service.dart';
+import 'active_order_screen.dart';
 
 class SitterBidsScreen extends StatefulWidget {
-  const SitterBidsScreen({super.key});
+  final int petRequestId;
+  const SitterBidsScreen({super.key, required this.petRequestId});
 
   @override
   State<SitterBidsScreen> createState() => _SitterBidsScreenState();
 }
 
 class _SitterBidsScreenState extends State<SitterBidsScreen> {
-  // Dummy data: Ini seolah-olah data dari Sitter yang merespons lelang Anda
-  final List<Map<String, dynamic>> _biddingSitters = [
-    {'id': 1, 'name': 'Budi Santoso', 'distance': '0.5 km', 'rating': 4.8, 'price': 50000},
-    {'id': 2, 'name': 'Siti Aminah', 'distance': '1.2 km', 'rating': 4.9, 'price': 45000},
-    {'id': 3, 'name': 'Andi Wijaya', 'distance': '2.0 km', 'rating': 4.7, 'price': 40000},
-  ];
+  List<dynamic> _biddingSitters = [];
+  late WebSocketChannel _channel;
+  bool _isLoading = true;
+  bool _isAccepting = false;
 
-  void _showDealConfirm(Map<String, dynamic> sitter) {
+  @override
+  void initState() {
+    super.initState();
+    _initRealTimeData();
+  }
+
+  Future<void> _initRealTimeData() async {
+    final existingBids = await BiddingService.getBids(widget.petRequestId);
+
+    _channel = WebSocketChannel.connect(Uri.parse(BiddingService.wsUrl));
+    _channel.stream.listen((message) {
+      final data = jsonDecode(message);
+      if (data['type'] == 'NEW_BID' && data['pet_request_id'] == widget.petRequestId) {
+        if (mounted) {
+          setState(() {
+            _biddingSitters.add(data);
+            _biddingSitters.sort((a, b) => (a['amount'] as num).compareTo(b['amount'] as num));
+          });
+        }
+      }
+    });
+
+    if (mounted) {
+      setState(() {
+        _biddingSitters = existingBids;
+        _isLoading = false;
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _channel.sink.close();
+    super.dispose();
+  }
+
+  void _showDealConfirm(dynamic bid) {
+    final sitterName = bid['Sitter'] != null ? bid['Sitter']['name'] : 'Sitter #${bid['sitter_id']}';
+    final amount = bid['amount'];
+    final bidId = bid['ID'] ?? bid['id'];
+
     showModalBottomSheet(
       context: context,
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      isScrollControlled: true,
       builder: (context) {
-        return Padding(
-          padding: const EdgeInsets.all(20.0),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Text('Konfirmasi Penawaran', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 16),
-              Text('Apakah Anda setuju dengan harga Rp ${sitter['price']} dari ${sitter['name']}?'),
-              const SizedBox(height: 24),
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton(
-                      onPressed: () => Navigator.pop(context),
-                      child: const Text('Tunggu Dulu'),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: ElevatedButton(
-                      style: ElevatedButton.styleFrom(backgroundColor: Colors.green, foregroundColor: Colors.white),
-                      onPressed: () {
-                        Navigator.pop(context); // Tutup bottom sheet
-                        // Lanjut ke pesanan aktif
-                        Navigator.pushReplacement(
-                          context,
-                          MaterialPageRoute(builder: (context) => ActiveOrderScreen(sitter: sitter)),
-                        );
-                      },
-                      child: const Text('Deal!'),
-                    ),
-                  ),
-                ],
-              )
-            ],
-          ),
+        return StatefulBuilder(
+            builder: (BuildContext context, StateSetter setModalState) {
+              return Padding(
+                padding: const EdgeInsets.all(20.0),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text('Konfirmasi Penawaran', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 16),
+                    Text('Apakah Anda setuju dengan harga Rp $amount dari $sitterName?'),
+                    const SizedBox(height: 24),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton(
+                            onPressed: _isAccepting ? null : () => Navigator.pop(context),
+                            child: const Text('Tunggu Dulu'),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: ElevatedButton(
+                            style: ElevatedButton.styleFrom(backgroundColor: Colors.green, foregroundColor: Colors.white),
+                            onPressed: _isAccepting
+                                ? null
+                                : () async {
+                              setModalState(() => _isAccepting = true);
+                              bool success = await BiddingService.acceptBid(bidId);
+                              setModalState(() => _isAccepting = false);
+
+                              if (success && mounted) {
+                                Navigator.pop(context);
+                                Navigator.pushReplacement(
+                                  context,
+                                  MaterialPageRoute(builder: (context) => ActiveOrderScreen(petRequestId: widget.petRequestId)),
+                                );
+                              } else {
+                                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Gagal menyetujui tawaran.')));
+                              }
+                            },
+                            child: _isAccepting
+                                ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                                : const Text('Deal!'),
+                          ),
+                        ),
+                      ],
+                    )
+                  ],
+                ),
+              );
+            }
         );
       },
     );
@@ -72,9 +130,10 @@ class _SitterBidsScreenState extends State<SitterBidsScreen> {
         iconTheme: const IconThemeData(color: AppColors.textPrimary),
         elevation: 0,
       ),
-      body: Stack(
+      body: _isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : Stack(
         children: [
-          // Background Peta Dummy
           Container(
             color: Colors.blueGrey[50],
             child: Center(
@@ -83,18 +142,17 @@ class _SitterBidsScreenState extends State<SitterBidsScreen> {
                 children: [
                   Icon(Icons.radar, size: 80, color: AppColors.primary.withOpacity(0.5)),
                   const SizedBox(height: 16),
-                  const Text('Menunggu Sitter merespons...', style: TextStyle(color: Colors.grey)),
-                  const SizedBox(height: 200), // Ruang untuk list di bawah
+                  Text(_biddingSitters.isEmpty ? 'Menunggu Sitter merespons...' : 'Sitter ditemukan!', style: const TextStyle(color: Colors.grey)),
+                  const SizedBox(height: 200),
                 ],
               ),
             ),
           ),
 
-          // List Tawaran Sitter
           Align(
             alignment: Alignment.bottomCenter,
             child: Container(
-              height: 400, // Lebih tinggi sedikit agar list terlihat jelas
+              height: 400,
               decoration: const BoxDecoration(
                 color: Colors.white,
                 borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
@@ -115,32 +173,56 @@ class _SitterBidsScreenState extends State<SitterBidsScreen> {
                     child: Text('Sitter Terdekat (Harga Tawaran)', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
                   ),
                   Expanded(
-                    child: ListView.builder(
+                    child: _biddingSitters.isEmpty
+                        ? const Center(child: Text("Belum ada penawaran. Sistem sedang menyiarkan pesanan Anda..."))
+                        : ListView.builder(
+                      physics: const BouncingScrollPhysics(), // Menghilangkan efek melar
                       itemCount: _biddingSitters.length,
                       itemBuilder: (context, index) {
-                        final sitter = _biddingSitters[index];
-                        return ListTile(
-                          contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-                          leading: const CircleAvatar(backgroundColor: AppColors.primary, child: Icon(Icons.person, color: Colors.white)),
-                          title: Text(sitter['name'], style: const TextStyle(fontWeight: FontWeight.bold)),
-                          subtitle: Text('${sitter['distance']} • ${sitter['rating']} ⭐'),
-                          trailing: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            crossAxisAlignment: CrossAxisAlignment.end,
+                        final bid = _biddingSitters[index];
+                        final sitterName = bid['Sitter'] != null ? bid['Sitter']['name'] : 'Sitter #${bid['sitter_id']}';
+                        final amount = bid['amount'];
+
+                        // PERBAIKAN: Layout Custom Row yang menggantikan ListTile agar tidak Overflow
+                        return Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                          decoration: BoxDecoration(
+                            border: Border(bottom: BorderSide(color: Colors.grey.shade100)),
+                          ),
+                          child: Row(
                             children: [
-                              Text('Rp ${sitter['price']}', style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.green, fontSize: 16)),
-                              const SizedBox(height: 4),
-                              SizedBox(
-                                height: 30,
-                                child: ElevatedButton(
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: AppColors.primary, foregroundColor: Colors.white,
-                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                                    padding: const EdgeInsets.symmetric(horizontal: 12),
-                                  ),
-                                  onPressed: () => _showDealConfirm(sitter),
-                                  child: const Text('Pilih', style: TextStyle(fontSize: 12)),
+                              const CircleAvatar(backgroundColor: AppColors.primary, child: Icon(Icons.person, color: Colors.white)),
+                              const SizedBox(width: 16),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(sitterName, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                                    const SizedBox(height: 4),
+                                    const Text('Menunggu konfirmasi...', style: TextStyle(color: Colors.grey, fontSize: 12)),
+                                  ],
                                 ),
+                              ),
+                              Column(
+                                crossAxisAlignment: CrossAxisAlignment.end,
+                                mainAxisSize: MainAxisSize.min, // Mencegah overflow
+                                children: [
+                                  Text('Rp $amount', style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.green, fontSize: 16)),
+                                  const SizedBox(height: 8),
+                                  SizedBox(
+                                    height: 32,
+                                    child: ElevatedButton(
+                                      style: ElevatedButton.styleFrom(
+                                        backgroundColor: AppColors.primary, foregroundColor: Colors.white,
+                                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                                        elevation: 0,
+                                      ),
+                                      onPressed: () => _showDealConfirm(bid),
+                                      child: const Text('Pilih', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                                    ),
+                                  )
+                                ],
                               )
                             ],
                           ),

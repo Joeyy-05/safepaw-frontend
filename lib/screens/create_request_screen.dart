@@ -1,5 +1,9 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 import 'sitter_bids_screen.dart';
+import '../services/bidding_service.dart';
+import '../services/auth_service.dart';
 
 class CreateRequestScreen extends StatefulWidget {
   const CreateRequestScreen({super.key});
@@ -9,161 +13,256 @@ class CreateRequestScreen extends StatefulWidget {
 }
 
 class _CreateRequestScreenState extends State<CreateRequestScreen> {
-  // Nilai awal (default) untuk dropdown sesuai gambar
-  String _selectedHewan = 'Dog';
-  String _selectedTanggal = 'April 10-12';
-  String _selectedLokasi = 'Tarutung';
+  // Controller untuk input dinamis
+  final TextEditingController _petNameController = TextEditingController();
+  final TextEditingController _locationController = TextEditingController();
+  final TextEditingController _notesController = TextEditingController();
 
-  void _mulaiLelang() {
-    // Navigasi ke layar daftar Sitter (Peta Sitter)
-    Navigator.push(
-      context,
-      MaterialPageRoute(builder: (context) => const SitterBidsScreen()),
+  String _selectedHewan = 'Anjing';
+  DateTimeRange? _selectedDateRange;
+
+  bool _isLoading = false;
+  String _userName = "Pemilik";
+
+  @override
+  void initState() {
+    super.initState();
+    _loadUserName();
+  }
+
+  @override
+  void dispose() {
+    _petNameController.dispose();
+    _locationController.dispose();
+    _notesController.dispose();
+    super.dispose();
+  }
+
+  // Mengambil nama pengguna dari JWT
+  Future<void> _loadUserName() async {
+    String? token = await AuthService.getToken();
+    if (token != null) {
+      try {
+        final parts = token.split('.');
+        if (parts.length == 3) {
+          String resp = utf8.decode(base64Url.decode(base64Url.normalize(parts[1])));
+          final decoded = jsonDecode(resp);
+          if (mounted) {
+            setState(() => _userName = decoded['name'] ?? "Pemilik");
+          }
+        }
+      } catch (e) {
+        print("Gagal decode nama: $e");
+      }
+    }
+  }
+
+  // Membuka kalender bawaan Flutter
+  Future<void> _pickDateRange() async {
+    DateTimeRange? picked = await showDateRangePicker(
+      context: context,
+      firstDate: DateTime.now(),
+      lastDate: DateTime.now().add(const Duration(days: 365)),
+      builder: (context, child) {
+        return Theme(
+          data: Theme.of(context).copyWith(
+            colorScheme: const ColorScheme.light(
+              primary: Color(0xFFF59E0B), // Warna Oranye SafePaw
+              onPrimary: Colors.white,
+              onSurface: Colors.black,
+            ),
+          ),
+          child: child!,
+        );
+      },
     );
+
+    if (picked != null) {
+      setState(() => _selectedDateRange = picked);
+    }
+  }
+
+  void _mulaiLelang() async {
+    // Validasi form agar tidak ada yang kosong
+    if (_petNameController.text.isEmpty ||
+        _locationController.text.isEmpty ||
+        _selectedDateRange == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Nama hewan, lokasi, dan tanggal wajib diisi!')),
+      );
+      return;
+    }
+
+    setState(() => _isLoading = true);
+
+    // Kirim data dinamis ke API
+    int? newRequestId = await BiddingService.createPetRequest(
+      _petNameController.text,
+      _selectedHewan,
+      _selectedDateRange!.start,
+      _selectedDateRange!.end,
+      _locationController.text,
+      _notesController.text,
+    );
+
+    setState(() => _isLoading = false);
+
+    if (newRequestId != null && mounted) {
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(
+          builder: (context) => SitterBidsScreen(petRequestId: newRequestId),
+        ),
+      );
+    } else {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Gagal membuat pesanan lelang. Cek koneksi Anda.')),
+        );
+      }
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.white,
+      appBar: AppBar(
+        backgroundColor: const Color(0xFFFFCC80),
+        elevation: 0,
+        iconTheme: const IconThemeData(color: Colors.black87),
+      ),
       body: SingleChildScrollView(
         child: Column(
           children: [
-            // 1. HEADER AREA (Background Oranye & Avatar)
+            // HEADER AREA
             SizedBox(
-              height: 250, // Total tinggi area header + overlap avatar
+              height: 180,
               child: Stack(
                 alignment: Alignment.topCenter,
                 children: [
-                  // Latar Belakang Oranye Melengkung
                   Container(
-                    height: 180,
+                    height: 120,
                     width: double.infinity,
                     decoration: const BoxDecoration(
-                      color: Color(0xFFFFCC80), // Warna oranye muda/peach sesuai desain
-                      borderRadius: BorderRadius.vertical(
-                        bottom: Radius.circular(24),
-                      ),
+                      color: Color(0xFFFFCC80),
+                      borderRadius: BorderRadius.vertical(bottom: Radius.circular(24)),
                     ),
-                    child: const SafeArea(
+                    child: SafeArea(
                       child: Padding(
-                        padding: EdgeInsets.only(top: 20.0),
+                        padding: const EdgeInsets.only(top: 8.0),
                         child: Text(
-                          'Selamat Datang, Budi!',
+                          'Mulai Penitipan, $_userName',
                           textAlign: TextAlign.center,
-                          style: TextStyle(
-                            fontSize: 20,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.black87,
-                          ),
+                          style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.black87),
                         ),
                       ),
                     ),
                   ),
-
-                  // Avatar & Nama Hewan (Milo) yang Overlapping
                   Positioned(
-                    top: 120, // Mengatur agar posisinya menimpa batas garis lengkung
-                    child: Column(
-                      children: [
-                        // Lingkaran Avatar
-                        Container(
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            border: Border.all(color: Colors.white, width: 4),
-                          ),
-                          child: const CircleAvatar(
-                            radius: 35,
-                            backgroundColor: Color(0xFF81C784), // Hijau muda
-                            // Untuk MVP, pakai icon dummy. Nanti bisa diganti NetworkImage
-                            child: Icon(Icons.face, size: 40, color: Colors.brown),
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-
-                        // Badge Nama Hewan (Milo)
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
-                          decoration: BoxDecoration(
-                            color: Colors.white,
-                            borderRadius: BorderRadius.circular(16),
-                            boxShadow: const [
-                              BoxShadow(
-                                color: Colors.black12,
-                                blurRadius: 10,
-                                offset: Offset(0, 4),
-                              ),
-                            ],
-                          ),
-                          child: const Text(
-                            'Milo',
-                            style: TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.w900,
-                            ),
-                          ),
-                        ),
-                      ],
+                    top: 60,
+                    child: Container(
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        border: Border.all(color: Colors.white, width: 4),
+                        boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 8, offset: Offset(0, 4))],
+                      ),
+                      child: const CircleAvatar(
+                        radius: 40,
+                        backgroundColor: Color(0xFF81C784),
+                        child: Icon(Icons.pets, size: 40, color: Colors.white),
+                      ),
                     ),
                   ),
                 ],
               ),
             ),
 
-            const SizedBox(height: 20),
-
-            // 2. FORM INPUT AREA
+            // FORM INPUT AREA
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 24.0),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  _buildDropdownItem(
-                    label: 'Jenis Hewan',
+                  const Text('Nama Hewan', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: _petNameController,
+                    decoration: _inputStyle('Masukkan nama peliharaan Anda'),
+                  ),
+                  const SizedBox(height: 24),
+
+                  const Text('Jenis Hewan', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 8),
+                  DropdownButtonFormField<String>(
                     value: _selectedHewan,
-                    items: ['Dog', 'Cat', 'Bird', 'Rabbit'],
+                    icon: const Icon(Icons.keyboard_arrow_down, color: Colors.grey),
+                    decoration: _inputStyle(''),
+                    items: ['Anjing', 'Kucing', 'Burung', 'Kelinci', 'Lainnya'].map((item) {
+                      return DropdownMenuItem(value: item, child: Text(item));
+                    }).toList(),
                     onChanged: (val) => setState(() => _selectedHewan = val!),
                   ),
                   const SizedBox(height: 24),
 
-                  _buildDropdownItem(
-                    label: 'Tanggal penitipan',
-                    value: _selectedTanggal,
-                    items: ['April 10-12', 'April 13-15', 'April 16-18'],
-                    onChanged: (val) => setState(() => _selectedTanggal = val!),
+                  const Text('Tanggal Penitipan', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 8),
+                  GestureDetector(
+                    onTap: _pickDateRange,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: Colors.grey.shade300),
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(
+                            _selectedDateRange == null
+                                ? 'Pilih tanggal mulai & selesai'
+                                : '${DateFormat('dd MMM').format(_selectedDateRange!.start)} - ${DateFormat('dd MMM yyyy').format(_selectedDateRange!.end)}',
+                            style: TextStyle(color: _selectedDateRange == null ? Colors.grey : Colors.black87, fontSize: 15),
+                          ),
+                          const Icon(Icons.calendar_today, color: Colors.grey, size: 20),
+                        ],
+                      ),
+                    ),
                   ),
                   const SizedBox(height: 24),
 
-                  _buildDropdownItem(
-                    label: 'Lokasi/Jemput',
-                    value: _selectedLokasi,
-                    items: ['Tarutung', 'Balige', 'Laguboti', 'Medan'],
-                    onChanged: (val) => setState(() => _selectedLokasi = val!),
+                  const Text('Lokasi / Alamat Jemput', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: _locationController,
+                    decoration: _inputStyle('Contoh: Tarutung, Jl. Sisingamangaraja'),
+                  ),
+                  const SizedBox(height: 24),
+
+                  const Text('Catatan Tambahan (Opsional)', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: _notesController,
+                    maxLines: 3,
+                    decoration: _inputStyle('Contoh: Alergi ayam, harus jalan sore...'),
                   ),
 
                   const SizedBox(height: 48),
 
-                  // 3. TOMBOL MULAI LELANG
                   SizedBox(
                     width: double.infinity,
                     child: ElevatedButton(
-                      onPressed: _mulaiLelang,
+                      onPressed: _isLoading ? null : _mulaiLelang,
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFFF59E0B), // Warna oranye gelap sesuai desain
+                        backgroundColor: const Color(0xFFF59E0B),
                         padding: const EdgeInsets.symmetric(vertical: 16),
                         elevation: 0,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                       ),
-                      child: const Text(
-                        'Mulai Lelang Sitter',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
+                      child: _isLoading
+                          ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                          : const Text('Siarkan Pesanan ke Sitter', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
                     ),
                   ),
                   const SizedBox(height: 32),
@@ -176,50 +275,16 @@ class _CreateRequestScreenState extends State<CreateRequestScreen> {
     );
   }
 
-  // Widget bantuan (Helper) untuk membuat Dropdown agar kode lebih bersih
-  Widget _buildDropdownItem({
-    required String label,
-    required String value,
-    required List<String> items,
-    required void Function(String?) onChanged,
-  }) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          label,
-          style: const TextStyle(
-            fontSize: 14,
-            fontWeight: FontWeight.bold,
-            color: Colors.black87,
-          ),
-        ),
-        const SizedBox(height: 8),
-        DropdownButtonFormField<String>(
-          value: value,
-          icon: const Icon(Icons.keyboard_arrow_down, color: Colors.grey),
-          decoration: InputDecoration(
-            contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-            enabledBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide(color: Colors.grey.shade300),
-            ),
-            focusedBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-              borderSide: const BorderSide(color: Color(0xFFF59E0B)), // Oranye saat fokus
-            ),
-            filled: true,
-            fillColor: Colors.white,
-          ),
-          items: items.map((item) {
-            return DropdownMenuItem(
-              value: item,
-              child: Text(item, style: const TextStyle(color: Colors.black54)),
-            );
-          }).toList(),
-          onChanged: onChanged,
-        ),
-      ],
+  // Fungsi helper untuk styling TextField agar seragam
+  InputDecoration _inputStyle(String hint) {
+    return InputDecoration(
+      hintText: hint,
+      hintStyle: const TextStyle(color: Colors.grey, fontSize: 14),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: Colors.grey.shade300)),
+      focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: Color(0xFFF59E0B))),
+      filled: true,
+      fillColor: Colors.white,
     );
   }
 }

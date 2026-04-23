@@ -1,20 +1,61 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import '../utils/app_colors.dart';
+import '../services/auth_service.dart';
+import 'home_screen.dart';
+import 'live_update_screen.dart';
 
-class ActiveOrderScreen extends StatelessWidget {
-  final Map<String, dynamic> sitter;
+class ActiveOrderScreen extends StatefulWidget {
+  final int petRequestId;
 
-  const ActiveOrderScreen({super.key, required this.sitter});
+  const ActiveOrderScreen({super.key, required this.petRequestId});
+
+  @override
+  State<ActiveOrderScreen> createState() => _ActiveOrderScreenState();
+}
+
+class _ActiveOrderScreenState extends State<ActiveOrderScreen> {
+  String? _userRole;
+  int? _userId;
+
+  @override
+  void initState() {
+    super.initState();
+    _decodeUserToken();
+  }
+
+  Future<void> _decodeUserToken() async {
+    String? token = await AuthService.getToken();
+    if (token != null) {
+      final parts = token.split('.');
+      if (parts.length == 3) {
+        String resp = utf8.decode(base64Url.decode(base64Url.normalize(parts[1])));
+        final decoded = jsonDecode(resp);
+        setState(() {
+          _userId = decoded['user_id'];
+          _userRole = decoded['role'];
+        });
+      }
+    }
+  }
+
+  void _kembaliKeHome() {
+    Navigator.pushAndRemoveUntil(
+      context,
+      MaterialPageRoute(builder: (context) => const HomeScreen()),
+          (route) => false,
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(
-        title: const Text('Pesanan Aktif', style: TextStyle(color: AppColors.textPrimary)),
+        title: const Text('Dashboard Penitipan', style: TextStyle(color: AppColors.textPrimary)),
         backgroundColor: Colors.white,
         elevation: 0,
-        automaticallyImplyLeading: false, // Hilangkan tombol back agar tidak kembali ke pencarian
+        automaticallyImplyLeading: false,
       ),
       body: SafeArea(
         child: Padding(
@@ -22,104 +63,64 @@ class ActiveOrderScreen extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // Kartu Status
+              // Kartu Status Kesepakatan
               Container(
                 padding: const EdgeInsets.all(24),
                 decoration: BoxDecoration(
-                  color: AppColors.primary,
+                  color: Colors.green,
                   borderRadius: BorderRadius.circular(16),
-                  boxShadow: [BoxShadow(color: AppColors.primary.withOpacity(0.3), blurRadius: 12, offset: const Offset(0, 6))],
+                  boxShadow: [BoxShadow(color: Colors.green.withOpacity(0.3), blurRadius: 12, offset: const Offset(0, 6))],
                 ),
                 child: const Column(
                   children: [
-                    Icon(Icons.check_circle, color: Colors.white, size: 64),
+                    Icon(Icons.handshake, color: Colors.white, size: 64),
                     SizedBox(height: 16),
-                    Text(
-                      'Yeay! Deal Berhasil 🐾',
-                      style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold),
-                    ),
+                    Text('Lelang Selesai & Sepakat!', style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold)),
                     SizedBox(height: 8),
-                    Text(
-                      'Sitter akan segera menghubungi & menujumu.',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(color: Colors.white70, fontSize: 14),
-                    ),
+                    Text('Hewan peliharaan sedang dalam masa penitipan.', textAlign: TextAlign.center, style: TextStyle(color: Colors.white70, fontSize: 14)),
                   ],
                 ),
               ),
               const SizedBox(height: 32),
 
-              // Detail Sitter & Harga
-              const Text('Detail Pet Sitter', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: AppColors.textPrimary)),
-              const SizedBox(height: 12),
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: Colors.grey[200]!),
+              // Area Aksi Berdasarkan Peran
+              if (_userRole == 'sitter') ...[
+                const Text('Tugas Anda:', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: AppColors.textPrimary)),
+                const SizedBox(height: 12),
+                ElevatedButton.icon(
+                  onPressed: () {
+                    if (_userId != null) {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (context) => LiveUpdateScreen(petRequestId: widget.petRequestId, sitterId: _userId!)),
+                      );
+                    }
+                  },
+                  icon: const Icon(Icons.camera_alt, color: Colors.white),
+                  label: const Text('Kirim Live Update (Foto & Laporan)', style: TextStyle(color: Colors.white)),
+                  style: ElevatedButton.styleFrom(backgroundColor: AppColors.primary, padding: const EdgeInsets.symmetric(vertical: 16), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
                 ),
-                child: Row(
-                  children: [
-                    const CircleAvatar(radius: 30, backgroundColor: Colors.grey, child: Icon(Icons.person, size: 30, color: Colors.white)),
-                    const SizedBox(width: 16),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(sitter['name'], style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                          const SizedBox(height: 4),
-                          Row(
-                            children: [
-                              const Icon(Icons.star, color: Colors.amber, size: 16),
-                              Text(' ${sitter['rating']} • Jarak: ${sitter['distance']}', style: const TextStyle(color: Colors.grey)),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.chat_bubble, color: AppColors.primary),
-                      onPressed: () {
-                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Fitur Chat MVP belum tersedia')));
-                      },
-                    )
-                  ],
+              ] else if (_userRole == 'owner' || _userRole == 'pet_owner') ...[
+                const Text('Pantauan Langsung:', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: AppColors.textPrimary)),
+                const SizedBox(height: 12),
+                // Untuk tahap ini, kita arahkan Owner ke halaman statis sederhana, idealnya ini menembak GET /api/updates
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.grey[300]!)),
+                  child: const Text('Catatan MVP: Fitur penarikan data visual laporan Sitter akan diintegrasikan lebih lanjut. Sitter sudah dapat mengirimkan data ke database server Anda.', style: TextStyle(color: Colors.grey)),
                 ),
-              ),
-              const SizedBox(height: 16),
-
-              // Harga Deal
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: Colors.grey[200]!),
-                ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    const Text('Total Harga Kesepakatan', style: TextStyle(fontSize: 16, color: Colors.grey)),
-                    Text('Rp ${sitter['price']}', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.green)),
-                  ],
-                ),
-              ),
+              ],
 
               const Spacer(),
 
-              // Tombol Selesai
-              ElevatedButton(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.primary,
+              OutlinedButton(
+                style: OutlinedButton.styleFrom(
                   padding: const EdgeInsets.symmetric(vertical: 16),
+                  side: const BorderSide(color: AppColors.primary),
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                 ),
-                onPressed: () {
-                  // Kembali ke Home
-                  Navigator.pop(context);
-                },
-                child: const Text('Kembali ke Beranda', style: TextStyle(color: Colors.white, fontSize: 16)),
+                onPressed: _kembaliKeHome,
+                child: const Text('Tutup dan Kembali ke Beranda', style: TextStyle(color: AppColors.primary, fontSize: 16, fontWeight: FontWeight.bold)),
               ),
             ],
           ),
